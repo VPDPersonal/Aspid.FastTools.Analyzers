@@ -1,10 +1,10 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UnityFastToolsAnalyzers", "UnityFastToolsAnalyzers\UnityFastToolsAnalyzers\UnityFastToolsAnalyzers.csproj", "{091DB171-0ED3-40AD-9B4E-17CBBBBC1227}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aspid.FastTools.Analyzers", "Aspid.FastTools.Analyzers\Aspid.FastTools.Analyzers\Aspid.FastTools.Analyzers.csproj", "{091DB171-0ED3-40AD-9B4E-17CBBBBC1227}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UnityFastToolsAnalyzers.Sample", "UnityFastToolsAnalyzers\UnityFastToolsAnalyzers.Sample\UnityFastToolsAnalyzers.Sample.csproj", "{04D44D96-3E99-4F20-9713-C0BCB4658493}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aspid.FastTools.Analyzers.Sample", "Aspid.FastTools.Analyzers\Aspid.FastTools.Analyzers.Sample\Aspid.FastTools.Analyzers.Sample.csproj", "{04D44D96-3E99-4F20-9713-C0BCB4658493}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UnityFastToolsAnalyzers.Tests", "UnityFastToolsAnalyzers\UnityFastToolsAnalyzers.Tests\UnityFastToolsAnalyzers.Tests.csproj", "{59B94341-CBCB-4BCF-9D79-BC2E5EC20C8B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aspid.FastTools.Analyzers.Tests", "Aspid.FastTools.Analyzers\Aspid.FastTools.Analyzers.Tests\Aspid.FastTools.Analyzers.Tests.csproj", "{59B94341-CBCB-4BCF-9D79-BC2E5EC20C8B}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

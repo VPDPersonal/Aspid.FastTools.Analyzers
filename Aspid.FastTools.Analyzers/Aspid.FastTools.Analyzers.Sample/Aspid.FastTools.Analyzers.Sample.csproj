@@ -6,7 +6,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\UnityFastToolsAnalyzers\UnityFastToolsAnalyzers.csproj"
+        <ProjectReference Include="..\Aspid.FastTools.Analyzers\Aspid.FastTools.Analyzers.csproj"
                           OutputItemType="Analyzer" ReferenceOutputAssembly="false"/>
     </ItemGroup>
 

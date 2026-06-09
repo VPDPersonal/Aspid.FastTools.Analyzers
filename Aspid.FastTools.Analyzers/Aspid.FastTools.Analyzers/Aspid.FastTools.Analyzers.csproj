@@ -9,8 +9,8 @@
         <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
         <IsRoslynComponent>true</IsRoslynComponent>
 
-        <RootNamespace>UnityFastToolsAnalyzers</RootNamespace>
-        <AssemblyName>UnityFastToolsAnalyzers</AssemblyName>
+        <RootNamespace>Aspid.FastTools.Analyzers</RootNamespace>
+        <AssemblyName>Aspid.FastTools.Analyzers</AssemblyName>
     </PropertyGroup>
 
     <ItemGroup>
@@ -23,12 +23,8 @@
     </ItemGroup>
 
     <ItemGroup>
-      <AdditionalFiles Remove="AnalyzerReleases.Shipped.md" />
-      <AdditionalFiles Remove="AnalyzerReleases.Unshipped.md" />
-    </ItemGroup>
-
-    <ItemGroup>
-      <Folder Include="Helpers\" />
+      <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+      <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
     </ItemGroup>
 
 </Project>
