@@ -136,11 +136,24 @@ public sealed class AspidFastToolsAnalyzer : DiagnosticAnalyzer
     }
 
     // Two non-interface types with no inheritance relationship can share no concrete instance (single inheritance),
-    // so the selector would be empty. Interfaces are never provably disjoint — one class can implement both — so they
-    // are left alone to avoid false positives.
+    // so the selector would be empty. An interface paired with a class is only provably disjoint when the class is
+    // sealed and does not implement it — no further subtype can add the interface. Two interfaces are never provably
+    // disjoint (one class can implement both), so they are left alone to avoid false positives.
     private static bool AreProvablyDisjoint(ITypeSymbol baseType, ITypeSymbol fieldType)
     {
-        if (baseType.TypeKind == TypeKind.Interface || fieldType.TypeKind == TypeKind.Interface) return false;
+        var baseIsInterface = baseType.TypeKind == TypeKind.Interface;
+        var fieldIsInterface = fieldType.TypeKind == TypeKind.Interface;
+
+        if (baseIsInterface && fieldIsInterface) return false;
+
+        if (baseIsInterface || fieldIsInterface)
+        {
+            var contract = baseIsInterface ? baseType : fieldType;
+            var implementation = baseIsInterface ? fieldType : baseType;
+
+            return implementation.IsSealed && !IsAssignableTo(implementation, contract);
+        }
+
         return !IsAssignableTo(baseType, fieldType) && !IsAssignableTo(fieldType, baseType);
     }
 

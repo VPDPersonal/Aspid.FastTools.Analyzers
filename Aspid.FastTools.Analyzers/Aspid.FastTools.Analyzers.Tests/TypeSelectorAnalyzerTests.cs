@@ -94,4 +94,28 @@ using Aspid.FastTools.Types;
 interface IMarker { }
 class Base { }
 class C { [SerializeReference, TypeSelector(typeof(IMarker))] private Base _value; }");
+
+    [Fact]
+    public Task InterfaceBaseType_SealedFieldTypeNotImplementing_ReportsAFT0003() => Verify(@"
+using UnityEngine;
+using Aspid.FastTools.Types;
+interface IMarker { }
+sealed class Leaf { }
+class C { [SerializeReference, TypeSelector({|AFT0003:typeof(IMarker)|})] private Leaf _value; }");
+
+    [Fact]
+    public Task InterfaceBaseType_SealedFieldTypeImplementing_NoDiagnostic() => Verify(@"
+using UnityEngine;
+using Aspid.FastTools.Types;
+interface IMarker { }
+sealed class Leaf : IMarker { }
+class C { [SerializeReference, TypeSelector(typeof(IMarker))] private Leaf _value; }");
+
+    [Fact]
+    public Task SealedBaseTypeNotImplementingInterfaceField_ReportsAFT0003() => Verify(@"
+using UnityEngine;
+using Aspid.FastTools.Types;
+interface IWeapon { }
+sealed class Unrelated { }
+class C { [SerializeReference, TypeSelector({|AFT0003:typeof(Unrelated)|})] private IWeapon _value; }");
 }
