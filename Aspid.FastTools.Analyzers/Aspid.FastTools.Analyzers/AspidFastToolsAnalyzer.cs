@@ -188,7 +188,7 @@ public sealed class AspidFastToolsAnalyzer : DiagnosticAnalyzer
             if (IsConcreteInstantiable(baseType) && !IsUnityObjectDerived(baseType)) continue;
 
             var candidates = lazyCandidates.Value;
-            if (HasVisibleCandidate(baseType, candidates)) continue;
+            if (HasVisibleCandidate(baseType, elementType, candidates)) continue;
 
             context.ReportDiagnostic(Diagnostic.Create(
                 DiagnosticRules.TypeSelectorNoConcreteImplementationRule,
@@ -217,21 +217,35 @@ public sealed class AspidFastToolsAnalyzer : DiagnosticAnalyzer
         return builder.Count > 0 ? builder.ToImmutable() : ImmutableArray.Create(elementType);
     }
 
-    // Returns true when at least one candidate in the compilation is assignable to baseType.
-    // For an open generic definition, assignability is tested against the original definition to avoid needing
-    // concrete type arguments (any closed form would still be assignable to the base).
-    private static bool HasVisibleCandidate(ITypeSymbol baseType, ImmutableArray<INamedTypeSymbol> candidates)
+    // Returns true when at least one candidate in the compilation is assignable to BOTH baseType and fieldElementType.
+    // The picker intersects the typeof(...) base set with the field's declared element type, so a candidate must
+    // satisfy both constraints to be reachable. When fieldElementType is System.Object, condition (b) is trivially
+    // true for any candidate and is skipped.
+    // For open generic definitions, assignability is tested against original definitions to avoid needing concrete
+    // type arguments (any closed form would still be assignable to both bases).
+    private static bool HasVisibleCandidate(
+        ITypeSymbol baseType, ITypeSymbol fieldElementType, ImmutableArray<INamedTypeSymbol> candidates)
     {
-        var baseOriginal = (baseType as INamedTypeSymbol)?.OriginalDefinition ?? baseType;
+        var fieldIsObject = fieldElementType.SpecialType == SpecialType.System_Object;
+
+        var baseOriginal  = (baseType         as INamedTypeSymbol)?.OriginalDefinition ?? baseType;
+        var fieldOriginal = (fieldElementType as INamedTypeSymbol)?.OriginalDefinition ?? fieldElementType;
 
         foreach (var candidate in candidates)
         {
-            // For open generic candidates test their original definition against the base's original definition;
+            // For open generic candidates test their original definition against each base's original definition;
             // this avoids false negatives when the candidate matches a generic base.
             var testFrom = candidate.IsGenericType ? candidate.OriginalDefinition : candidate;
-            var testTo   = baseType.IsDefinition ? baseType : baseOriginal;
 
-            if (IsAssignableTo(testFrom, testTo)) return true;
+            var testToBase  = baseType.IsDefinition         ? baseType         : baseOriginal;
+            var testToField = fieldElementType.IsDefinition ? fieldElementType : fieldOriginal;
+
+            if (!IsAssignableTo(testFrom, testToBase)) continue;
+
+            // Condition (c): candidate must also be assignable to the field's element type, unless it is object.
+            if (!fieldIsObject && !IsAssignableTo(testFrom, testToField)) continue;
+
+            return true;
         }
 
         return false;

@@ -96,13 +96,24 @@ class Derived : Base { }
 class C { [SerializeReference, TypeSelector(typeof(Derived))] private Base _value; }");
 
     [Fact]
-    public Task InterfaceBaseType_NoDiagnostic() => Verify(@"
+    public Task InterfaceBaseType_ImplDerivesFromBoth_NoDiagnostic() => Verify(@"
+using UnityEngine;
+using Aspid.FastTools.Types;
+interface IMarker { }
+class Base { }
+class MarkerImpl : Base, IMarker { }
+class C { [SerializeReference, TypeSelector(typeof(IMarker))] private Base _value; }");
+
+    // The only IMarker implementation does not derive from Base, so the intersection is empty.
+    // AFT0003 must NOT fire: an interface paired with a non-sealed class is never provably disjoint.
+    [Fact]
+    public Task InterfaceBaseType_ImplNotDerivingFromFieldType_ReportsAFT0005() => Verify(@"
 using UnityEngine;
 using Aspid.FastTools.Types;
 interface IMarker { }
 class Base { }
 class MarkerImpl : IMarker { }
-class C { [SerializeReference, TypeSelector(typeof(IMarker))] private Base _value; }");
+class C { [SerializeReference, {|AFT0005:TypeSelector(typeof(IMarker))|}] private Base _value; }");
 
     [Fact]
     public Task InterfaceBaseType_SealedFieldTypeNotImplementing_ReportsAFT0003() => Verify(@"
