@@ -11,7 +11,7 @@ public class TypeSelectorAnalyzerTests
     // Minimal stand-ins for the attributes the analyzer matches by full name, so the tests need no Unity / package
     // references. Appended after the test snippet (which carries the `using` directives) to keep usings at file top.
     private const string Stubs = @"
-namespace UnityEngine { public sealed class SerializeReferenceAttribute : System.Attribute { } }
+namespace UnityEngine { public sealed class SerializeReference : System.Attribute { } }
 namespace Aspid.FastTools.Types
 {
     [System.Flags] public enum TypeAllow { None = 0, Abstract = 1, Interface = 2, All = 3 }
