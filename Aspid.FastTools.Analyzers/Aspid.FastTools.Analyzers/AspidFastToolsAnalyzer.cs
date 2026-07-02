@@ -2,7 +2,9 @@ using System;
 using System.Linq;
 using System.Threading;
 using Microsoft.CodeAnalysis;
+using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Collections.Concurrent;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -39,19 +41,18 @@ public sealed class AspidFastToolsAnalyzer : DiagnosticAnalyzer
 
         context.RegisterCompilationStartAction(compilationContext =>
         {
-            // Build the candidate-type list once per compilation, lazily, so the cost is paid only when a
-            // [TypeSelector]+[SerializeReference] field is actually encountered (AFT0005 check).
-            var lazyCandidates = new Lazy<ImmutableArray<INamedTypeSymbol>>(
-                () => CollectConcreteCandidates(compilationContext.Compilation),
-                LazyThreadSafetyMode.ExecutionAndPublication);
+            // One cache per compilation: the AFT0005 candidate search walks assembly metadata, so its results are
+            // memoised per (base type, field element type) pair and the walk itself is limited to assemblies that
+            // can actually contain a candidate (see CandidateSearch).
+            var candidateSearch = new CandidateSearch(compilationContext.Compilation);
 
             compilationContext.RegisterSyntaxNodeAction(
-                ctx => AnalyzeField(ctx, lazyCandidates),
+                ctx => AnalyzeField(ctx, candidateSearch),
                 SyntaxKind.FieldDeclaration);
         });
     }
 
-    private static void AnalyzeField(SyntaxNodeAnalysisContext context, Lazy<ImmutableArray<INamedTypeSymbol>> lazyCandidates)
+    private static void AnalyzeField(SyntaxNodeAnalysisContext context, CandidateSearch candidateSearch)
     {
         var field = (FieldDeclarationSyntax)context.Node;
 
@@ -87,7 +88,7 @@ public sealed class AspidFastToolsAnalyzer : DiagnosticAnalyzer
         if (ReportObjectDerivedManagedReference(context, typeSelector, fieldSymbol.Name, elementType)) return;
 
         // AFT0005 — no visible concrete implementation exists for the effective base set.
-        ReportNoConcreteImplementation(context, typeSelector, fieldSymbol.Name, elementType, lazyCandidates, disjointBases);
+        ReportNoConcreteImplementation(context, typeSelector, fieldSymbol.Name, elementType, candidateSearch, disjointBases);
     }
 
     // AFT0002 — Allow opts abstract classes / interfaces into the candidate list, which cannot be instantiated for a
@@ -173,7 +174,7 @@ public sealed class AspidFastToolsAnalyzer : DiagnosticAnalyzer
         AttributeSyntax typeSelector,
         string fieldName,
         ITypeSymbol elementType,
-        Lazy<ImmutableArray<INamedTypeSymbol>> lazyCandidates,
+        CandidateSearch candidateSearch,
         ImmutableHashSet<ITypeSymbol> disjointBases)
     {
         // Collect the effective base set: typeof(...) arguments when present, otherwise the element type itself.
@@ -187,8 +188,7 @@ public sealed class AspidFastToolsAnalyzer : DiagnosticAnalyzer
             // Skip the check when the base itself is a concrete instantiable class — it is its own candidate.
             if (IsConcreteInstantiable(baseType) && !IsUnityObjectDerived(baseType)) continue;
 
-            var candidates = lazyCandidates.Value;
-            if (HasVisibleCandidate(baseType, elementType, candidates)) continue;
+            if (candidateSearch.HasVisibleCandidate(baseType, elementType, context.CancellationToken)) continue;
 
             context.ReportDiagnostic(Diagnostic.Create(
                 DiagnosticRules.TypeSelectorNoConcreteImplementationRule,
@@ -217,66 +217,148 @@ public sealed class AspidFastToolsAnalyzer : DiagnosticAnalyzer
         return builder.Count > 0 ? builder.ToImmutable() : ImmutableArray.Create(elementType);
     }
 
-    // Returns true when at least one candidate in the compilation is assignable to BOTH baseType and fieldElementType.
-    // The picker intersects the typeof(...) base set with the field's declared element type, so a candidate must
-    // satisfy both constraints to be reachable. When fieldElementType is System.Object, condition (b) is trivially
-    // true for any candidate and is skipped.
-    // For open generic definitions, assignability is tested against original definitions to avoid needing concrete
-    // type arguments (any closed form would still be assignable to both bases).
-    private static bool HasVisibleCandidate(
-        ITypeSymbol baseType, ITypeSymbol fieldElementType, ImmutableArray<INamedTypeSymbol> candidates)
+    /// <summary>
+    /// The AFT0005 candidate search: does any visible concrete class satisfy both the base type and the field's
+    /// element type? A naive walk of <see cref="Compilation.GlobalNamespace"/> materialises every symbol of every
+    /// referenced assembly (all of the BCL and UnityEngine — minutes of csc time in a Unity compilation), so the
+    /// search instead only walks assemblies that could contain a candidate: a type assignable to the base must live
+    /// in an assembly that declares or references the base's assembly (metadata cannot derive from an unreferenced
+    /// type), and likewise for the field's element type. The walk stops at the first match, and results are memoised
+    /// per (base type, field element type) pair for the lifetime of the compilation.
+    /// </summary>
+    private sealed class CandidateSearch
     {
-        var fieldIsObject = fieldElementType.SpecialType == SpecialType.System_Object;
+        private readonly Compilation _compilation;
+        private readonly ConcurrentDictionary<(ITypeSymbol Base, ITypeSymbol Field), bool> _results;
 
-        var baseOriginal  = (baseType         as INamedTypeSymbol)?.OriginalDefinition ?? baseType;
-        var fieldOriginal = (fieldElementType as INamedTypeSymbol)?.OriginalDefinition ?? fieldElementType;
-
-        foreach (var candidate in candidates)
+        public CandidateSearch(Compilation compilation)
         {
-            // For open generic candidates test their original definition against each base's original definition;
-            // this avoids false negatives when the candidate matches a generic base.
-            var testFrom = candidate.IsGenericType ? candidate.OriginalDefinition : candidate;
-
-            var testToBase  = baseType.IsDefinition         ? baseType         : baseOriginal;
-            var testToField = fieldElementType.IsDefinition ? fieldElementType : fieldOriginal;
-
-            if (!IsAssignableTo(testFrom, testToBase)) continue;
-
-            // Condition (c): candidate must also be assignable to the field's element type, unless it is object.
-            if (!fieldIsObject && !IsAssignableTo(testFrom, testToField)) continue;
-
-            return true;
+            _compilation = compilation;
+            _results = new ConcurrentDictionary<(ITypeSymbol, ITypeSymbol), bool>(PairComparer.Instance);
         }
 
-        return false;
-    }
+        // Returns true when at least one candidate in the compilation is assignable to BOTH baseType and
+        // fieldElementType. The picker intersects the typeof(...) base set with the field's declared element type,
+        // so a candidate must satisfy both constraints to be reachable. When fieldElementType is System.Object the
+        // field constraint is trivially true for any candidate and is skipped.
+        public bool HasVisibleCandidate(ITypeSymbol baseType, ITypeSymbol fieldElementType, CancellationToken cancellationToken)
+        {
+            if (_results.TryGetValue((baseType, fieldElementType), out var cached)) return cached;
 
-    // Collects every named type from the compilation's global namespace (source + references) that is a concrete,
-    // non-abstract, non-static class, not derived from UnityEngine.Object, not string, not a delegate.
-    private static ImmutableArray<INamedTypeSymbol> CollectConcreteCandidates(Compilation compilation)
-    {
-        var builder = ImmutableArray.CreateBuilder<INamedTypeSymbol>();
-        CollectFromNamespace(compilation.GlobalNamespace, builder);
-        return builder.ToImmutable();
-    }
+            var result = Scan(baseType, fieldElementType, cancellationToken);
+            return _results.GetOrAdd((baseType, fieldElementType), result);
+        }
 
-    private static void CollectFromNamespace(INamespaceSymbol ns, ImmutableArray<INamedTypeSymbol>.Builder builder)
-    {
-        foreach (var type in ns.GetTypeMembers())
-            CollectFromType(type, builder);
+        private bool Scan(ITypeSymbol baseType, ITypeSymbol fieldElementType, CancellationToken cancellationToken)
+        {
+            var fieldIsObject = fieldElementType.SpecialType == SpecialType.System_Object;
 
-        foreach (var nested in ns.GetNamespaceMembers())
-            CollectFromNamespace(nested, builder);
-    }
+            var baseAssembly  = baseType.OriginalDefinition.ContainingAssembly;
+            var fieldAssembly = fieldIsObject ? null : fieldElementType.OriginalDefinition.ContainingAssembly;
 
-    private static void CollectFromType(INamedTypeSymbol type, ImmutableArray<INamedTypeSymbol>.Builder builder)
-    {
-        if (IsConcreteInstantiable(type) && !IsUnityObjectDerived(type))
-            builder.Add(type);
+            // The source assembly first — candidates most often live next to the field — then only the references
+            // that can see both constraint types. A null constraint assembly (error type) filters nothing.
+            if (ScanAssembly(_compilation.Assembly, baseType, fieldElementType, fieldIsObject, cancellationToken))
+                return true;
 
-        // Recurse into nested types.
-        foreach (var nested in type.GetTypeMembers())
-            CollectFromType(nested, builder);
+            foreach (var reference in _compilation.SourceModule.ReferencedAssemblySymbols)
+            {
+                if (!Sees(reference, baseAssembly) || !Sees(reference, fieldAssembly)) continue;
+                if (ScanAssembly(reference, baseType, fieldElementType, fieldIsObject, cancellationToken))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool ScanAssembly(
+            IAssemblySymbol assembly, ITypeSymbol baseType, ITypeSymbol fieldElementType, bool fieldIsObject,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ScanNamespace(assembly.GlobalNamespace, baseType, fieldElementType, fieldIsObject);
+        }
+
+        private static bool ScanNamespace(
+            INamespaceSymbol ns, ITypeSymbol baseType, ITypeSymbol fieldElementType, bool fieldIsObject)
+        {
+            foreach (var type in ns.GetTypeMembers())
+                if (ScanType(type, baseType, fieldElementType, fieldIsObject)) return true;
+
+            foreach (var nested in ns.GetNamespaceMembers())
+                if (ScanNamespace(nested, baseType, fieldElementType, fieldIsObject)) return true;
+
+            return false;
+        }
+
+        private static bool ScanType(
+            INamedTypeSymbol type, ITypeSymbol baseType, ITypeSymbol fieldElementType, bool fieldIsObject)
+        {
+            if (IsCandidate(type, baseType, fieldElementType, fieldIsObject)) return true;
+
+            // Recurse into nested types.
+            foreach (var nested in type.GetTypeMembers())
+                if (ScanType(nested, baseType, fieldElementType, fieldIsObject)) return true;
+
+            return false;
+        }
+
+        // A candidate is a concrete, non-abstract, non-static class, not derived from UnityEngine.Object, not string,
+        // not a delegate, assignable to both constraint types. For open generic candidates assignability is tested
+        // against original definitions to avoid needing concrete type arguments (any closed form would still be
+        // assignable to both bases). Cheapest checks first: the UnityEngine.Object walk only runs on a type that
+        // already matched both constraints.
+        private static bool IsCandidate(
+            INamedTypeSymbol type, ITypeSymbol baseType, ITypeSymbol fieldElementType, bool fieldIsObject)
+        {
+            if (!IsConcreteInstantiable(type)) return false;
+
+            var testFrom = type.IsGenericType ? type.OriginalDefinition : type;
+
+            var testToBase = baseType.IsDefinition
+                ? baseType
+                : (baseType as INamedTypeSymbol)?.OriginalDefinition ?? baseType;
+
+            if (!IsAssignableTo(testFrom, testToBase)) return false;
+
+            if (!fieldIsObject)
+            {
+                var testToField = fieldElementType.IsDefinition
+                    ? fieldElementType
+                    : (fieldElementType as INamedTypeSymbol)?.OriginalDefinition ?? fieldElementType;
+
+                if (!IsAssignableTo(testFrom, testToField)) return false;
+            }
+
+            return !IsUnityObjectDerived(type);
+        }
+
+        // True when the assembly is (or references) the target, i.e. its metadata can declare a type derived from a
+        // type of the target. A null target (unresolved constraint type) filters nothing.
+        private static bool Sees(IAssemblySymbol assembly, IAssemblySymbol? target)
+        {
+            if (target is null) return true;
+            if (SymbolEqualityComparer.Default.Equals(assembly, target)) return true;
+
+            foreach (var module in assembly.Modules)
+                foreach (var referenced in module.ReferencedAssemblySymbols)
+                    if (SymbolEqualityComparer.Default.Equals(referenced, target)) return true;
+
+            return false;
+        }
+
+        private sealed class PairComparer : IEqualityComparer<(ITypeSymbol Base, ITypeSymbol Field)>
+        {
+            public static readonly PairComparer Instance = new();
+
+            public bool Equals((ITypeSymbol Base, ITypeSymbol Field) x, (ITypeSymbol Base, ITypeSymbol Field) y) =>
+                SymbolEqualityComparer.Default.Equals(x.Base, y.Base) &&
+                SymbolEqualityComparer.Default.Equals(x.Field, y.Field);
+
+            public int GetHashCode((ITypeSymbol Base, ITypeSymbol Field) pair) =>
+                SymbolEqualityComparer.Default.GetHashCode(pair.Base) * 397 ^
+                SymbolEqualityComparer.Default.GetHashCode(pair.Field);
+        }
     }
 
     private static bool IsConcreteInstantiable(ITypeSymbol type)

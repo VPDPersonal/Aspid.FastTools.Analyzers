@@ -204,4 +204,43 @@ interface IBase { }
 interface IDerived : IBase { }
 class DerivedImpl : IDerived { }
 class C { [SerializeReference, TypeSelector(typeof(IDerived))] private IBase _value; }");
+
+    // The candidate search only scans assemblies that can see the constraint types (perf: a Unity compilation
+    // references hundreds of assemblies). These tests pin the reference-assembly path: a candidate living in a
+    // referenced project must still be found, and its absence must still be reported.
+
+    [Fact]
+    public Task ImplInReferencedAssembly_NoAFT0005() => VerifyWithReferencedProject(@"
+using UnityEngine;
+using Aspid.FastTools.Types;
+class C { [SerializeReference, TypeSelector] private Contracts.IShared _shared; }",
+        referencedProjectSource: @"
+namespace Contracts
+{
+    public interface IShared { }
+    public class SharedImpl : IShared { }
+}");
+
+    [Fact]
+    public Task NoImplAnywhere_CrossAssembly_ReportsAFT0005() => VerifyWithReferencedProject(@"
+using UnityEngine;
+using Aspid.FastTools.Types;
+class C { [SerializeReference, {|AFT0005:TypeSelector|}] private Contracts.IShared _shared; }",
+        referencedProjectSource: @"
+namespace Contracts
+{
+    public interface IShared { }
+}");
+
+    private static Task VerifyWithReferencedProject(string code, string referencedProjectSource)
+    {
+        var test = new Microsoft.CodeAnalysis.CSharp.Testing.CSharpAnalyzerTest<
+            AspidFastToolsAnalyzer, Microsoft.CodeAnalysis.Testing.Verifiers.XUnitVerifier>();
+
+        test.TestState.Sources.Add(code + "\n" + Stubs);
+        test.TestState.AdditionalProjects["Contracts"].Sources.Add(referencedProjectSource);
+        test.TestState.AdditionalProjectReferences.Add("Contracts");
+
+        return test.RunAsync();
+    }
 }
