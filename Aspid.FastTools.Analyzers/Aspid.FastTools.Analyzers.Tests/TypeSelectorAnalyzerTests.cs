@@ -20,6 +20,9 @@ namespace Aspid.FastTools.Types
 {
     [System.Flags] public enum TypeAllow { None = 0, Abstract = 1, Interface = 2, All = 3 }
 
+    public sealed class SerializableType { }
+    public sealed class SerializableType<T> { }
+
     public sealed class TypeSelectorAttribute : System.Attribute
     {
         public TypeSelectorAttribute() { }
@@ -52,6 +55,28 @@ using System.Collections.Generic;
 interface IFoo { }
 class FooImpl : IFoo { }
 class C { [SerializeReference, TypeSelector] private List<IFoo> _foos; }");
+
+    [Fact]
+    public Task SerializableTypeField_NoDiagnostic() => Verify(@"
+using Aspid.FastTools.Types;
+class C { [TypeSelector] private SerializableType _type; }");
+
+    [Fact]
+    public Task SerializableTypeGenericField_NoDiagnostic() => Verify(@"
+using Aspid.FastTools.Types;
+class Base { }
+class C { [TypeSelector(typeof(Base))] private SerializableType<Base> _type; }");
+
+    [Fact]
+    public Task SerializableTypeList_NoDiagnostic() => Verify(@"
+using Aspid.FastTools.Types;
+using System.Collections.Generic;
+class C { [TypeSelector] private System.Collections.Generic.List<SerializableType> _types; }");
+
+    [Fact]
+    public Task AllowOnSerializableTypeField_NoDiagnostic() => Verify(@"
+using Aspid.FastTools.Types;
+class C { [TypeSelector(Allow = TypeAllow.None)] private SerializableType _type; }");
 
     [Fact]
     public Task UnsupportedFieldType_ReportsAFT0001() => Verify(@"

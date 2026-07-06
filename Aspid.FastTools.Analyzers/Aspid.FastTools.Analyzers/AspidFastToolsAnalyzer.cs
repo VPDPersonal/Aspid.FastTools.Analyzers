@@ -12,6 +12,7 @@ using Aspid.FastTools.Analyzers.Descriptions;
 using UnityAttributes = Aspid.FastTools.Analyzers.Descriptions.UnityEngine.AttributesDescription;
 using UnityClasses = Aspid.FastTools.Analyzers.Descriptions.UnityEngine.ClassesDescription;
 using AspidAttributes = Aspid.FastTools.Analyzers.Descriptions.AspidFastTools.AttributesDescription;
+using AspidClasses = Aspid.FastTools.Analyzers.Descriptions.AspidFastTools.ClassesDescription;
 using AspidEnums = Aspid.FastTools.Analyzers.Descriptions.AspidFastTools.EnumsDescription;
 
 namespace Aspid.FastTools.Analyzers;
@@ -65,17 +66,20 @@ public sealed class AspidFastToolsAnalyzer : DiagnosticAnalyzer
         // Unwrap arrays / List<T> so the checks see the element type a [SerializeReference] entry actually holds.
         var elementType = GetElementType(fieldSymbol.Type);
         var isString = elementType.SpecialType == SpecialType.System_String;
+        var isSerializableType = IsSerializableType(elementType);
         var isManagedReference = FindAttribute(field, context.SemanticModel, UnityAttributes.SerializeReferenceFull) is not null;
 
-        // AFT0001 — neither a string type-name field nor a [SerializeReference] managed reference: the drawer throws.
-        if (!isString && !isManagedReference)
+        // AFT0001 — none of the three valid shapes (a string type-name field, a SerializableType / SerializableType<T>
+        // field, or a [SerializeReference] managed reference): the drawer throws.
+        if (!isString && !isSerializableType && !isManagedReference)
         {
             context.ReportDiagnostic(Diagnostic.Create(
                 DiagnosticRules.TypeSelectorFieldTypeRule, typeSelector.GetLocation(), fieldSymbol.Name));
             return;
         }
 
-        // On a string field both Allow and the base types are meaningful (a Type is named, not instantiated).
+        // On a string or SerializableType field both Allow and the base types are meaningful (a Type is named, not
+        // instantiated), and none of the managed-reference-only checks below apply.
         if (!isManagedReference) return;
 
         ReportAllowOnManagedReference(context, typeSelector, fieldSymbol.Name);
@@ -402,6 +406,18 @@ public sealed class AspidFastToolsAnalyzer : DiagnosticAnalyzer
             return named.TypeArguments[0];
 
         return type;
+    }
+
+    // A SerializableType / SerializableType<T> field names a Type (like a string) rather than instantiating one, so
+    // [TypeSelector] is valid on it. Matched by the wrapper's original definition so both the non-generic and the
+    // open-generic form are recognized; List<>/array are already unwrapped into the element type by the caller.
+    private static bool IsSerializableType(ITypeSymbol type)
+    {
+        if (type is not INamedTypeSymbol named) return false;
+
+        var definition = named.OriginalDefinition.ToDisplayString();
+        return definition == AspidClasses.SerializableTypeFull ||
+            definition == AspidClasses.SerializableTypeGenericFull;
     }
 
     // Two non-interface types with no inheritance relationship can share no concrete instance (single inheritance),
