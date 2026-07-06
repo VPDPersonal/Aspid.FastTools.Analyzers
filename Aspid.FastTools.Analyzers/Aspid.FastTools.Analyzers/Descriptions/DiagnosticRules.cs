@@ -30,4 +30,20 @@ public static class DiagnosticRules
         category: UsageCategory,
         defaultSeverity: Severity.Warning,
         isEnabledByDefault: true);
+
+    public static readonly Descriptor TypeSelectorObjectDerivedRule = new(
+        id: "AFT0004",
+        title: "[TypeSelector] managed reference targets a UnityEngine.Object-derived type",
+        messageFormat: "[TypeSelector] with [SerializeReference] on '{0}': {1} derives from UnityEngine.Object, which Unity does not serialize as a managed reference — use a plain object field instead",
+        category: UsageCategory,
+        defaultSeverity: Severity.Error,
+        isEnabledByDefault: true);
+
+    public static readonly Descriptor TypeSelectorNoConcreteImplementationRule = new(
+        id: "AFT0005",
+        title: "[TypeSelector] base type has no visible concrete implementation",
+        messageFormat: "[TypeSelector] with [SerializeReference] on '{0}': no concrete, non-UnityEngine.Object class implementing '{1}' is visible in the compilation — the selector may be empty (implementations in downstream assemblies are not checked)",
+        category: UsageCategory,
+        defaultSeverity: Severity.Warning,
+        isEnabledByDefault: true);
 }
