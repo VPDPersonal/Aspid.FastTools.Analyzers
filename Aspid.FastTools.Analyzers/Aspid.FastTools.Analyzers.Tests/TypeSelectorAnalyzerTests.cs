@@ -334,6 +334,34 @@ class C
 }");
 
     [Fact]
+    public Task MemberReference_SerializableTypeField_NoDiagnostic() => Verify(@"
+using Aspid.FastTools.Types;
+class C
+{
+    private SerializableType _base;
+    [TypeSelector(nameof(_base))] private string _type;
+}");
+
+    [Fact]
+    public Task MemberReference_SerializableTypeGenericField_NoDiagnostic() => Verify(@"
+using Aspid.FastTools.Types;
+class Base { }
+class C
+{
+    private SerializableType<Base> _base;
+    [TypeSelector(nameof(_base))] private string _type;
+}");
+
+    [Fact]
+    public Task MemberReference_SerializableTypeArrayField_NoDiagnostic() => Verify(@"
+using Aspid.FastTools.Types;
+class C
+{
+    private SerializableType[] _bases;
+    [TypeSelector(nameof(_bases))] private string _type;
+}");
+
+    [Fact]
     public Task AssemblyQualifiedName_NoDiagnostic() => Verify(@"
 using Aspid.FastTools.Types;
 class C { [TypeSelector(""My.Namespace.IWeapon, MyAssembly"")] private string _type; }");

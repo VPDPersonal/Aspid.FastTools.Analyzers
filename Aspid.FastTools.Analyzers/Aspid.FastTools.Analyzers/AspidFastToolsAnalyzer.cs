@@ -191,7 +191,8 @@ public sealed class AspidFastToolsAnalyzer : DiagnosticAnalyzer
     }
 
     // A member the drawer can read as a base-type source: an instance field or property whose (element) type is
-    // System.Type or string. Static members are invisible to the drawer's instance-only lookup.
+    // System.Type, string, or a SerializableType / SerializableType<T> wrapper. Static members are invisible to the
+    // drawer's instance-only lookup.
     private static bool IsSuitableConstraintSource(ISymbol member)
     {
         var memberType = member switch
@@ -205,7 +206,8 @@ public sealed class AspidFastToolsAnalyzer : DiagnosticAnalyzer
         if (memberType is IArrayTypeSymbol array) memberType = array.ElementType;
 
         return memberType.SpecialType == SpecialType.System_String ||
-            memberType.ToDisplayString() == SystemTypeFull;
+            memberType.ToDisplayString() == SystemTypeFull ||
+            IsSerializableType(memberType);
     }
 
     // Light syntax check for an assembly-qualified name: the type part is dot/plus-separated identifiers (each
