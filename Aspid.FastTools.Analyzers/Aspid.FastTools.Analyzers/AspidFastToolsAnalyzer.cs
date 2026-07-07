@@ -33,7 +33,10 @@ public sealed class AspidFastToolsAnalyzer : DiagnosticAnalyzer
             DiagnosticRules.TypeSelectorAllowRule,
             DiagnosticRules.TypeSelectorBaseTypeRule,
             DiagnosticRules.TypeSelectorObjectDerivedRule,
-            DiagnosticRules.TypeSelectorNoConcreteImplementationRule);
+            DiagnosticRules.TypeSelectorNoConcreteImplementationRule,
+            DiagnosticRules.TypeSelectorMemberNotFoundRule,
+            DiagnosticRules.TypeSelectorMemberUnsuitableRule,
+            DiagnosticRules.TypeSelectorTypeNameSyntaxRule);
 
     public override void Initialize(AnalysisContext context)
     {
@@ -78,6 +81,11 @@ public sealed class AspidFastToolsAnalyzer : DiagnosticAnalyzer
             return;
         }
 
+        // AFT0006/AFT0007/AFT0008 — the drawer resolves each string argument member-first: a valid identifier is
+        // looked up as a field/property on the target object, anything else falls back to Type.GetType. Both
+        // failures are silent at runtime (the picker just loses its constraint), so they are surfaced here.
+        ReportStringArguments(context, typeSelector, fieldSymbol);
+
         // On a string or SerializableType field both Allow and the base types are meaningful (a Type is named, not
         // instantiated), and none of the managed-reference-only checks below apply.
         if (!isManagedReference) return;
@@ -93,6 +101,141 @@ public sealed class AspidFastToolsAnalyzer : DiagnosticAnalyzer
 
         // AFT0005 — no visible concrete implementation exists for the effective base set.
         ReportNoConcreteImplementation(context, typeSelector, fieldSymbol.Name, elementType, candidateSearch, disjointBases);
+    }
+
+    // System.Type — the member value shape the drawer reads reflectively (besides string); matched by display name
+    // so the tests need no reference resolution tricks.
+    private const string SystemTypeFull = "System.Type";
+
+    // AFT0006/AFT0007/AFT0008 — validate every constant-string positional argument of [TypeSelector(...)]. The
+    // drawer contract: a valid C# identifier names an instance field/property on the target object whose value
+    // (Type / Type[] / string / string[]) supplies the base types; any other string must be an assembly-qualified
+    // type name for Type.GetType.
+    private static void ReportStringArguments(SyntaxNodeAnalysisContext context, AttributeSyntax typeSelector, IFieldSymbol fieldSymbol)
+    {
+        if (typeSelector.ArgumentList is null) return;
+
+        foreach (var argument in typeSelector.ArgumentList.Arguments)
+        {
+            if (argument.NameEquals is not null) continue; // skip Allow = ... / Required = ...
+            ValidateStringExpression(context, argument.Expression, fieldSymbol);
+        }
+    }
+
+    private static void ValidateStringExpression(SyntaxNodeAnalysisContext context, ExpressionSyntax expression, IFieldSymbol fieldSymbol)
+    {
+        // The params string[] overload can be called with an explicit array — validate each element.
+        var initializer = expression switch
+        {
+            ArrayCreationExpressionSyntax array => array.Initializer,
+            ImplicitArrayCreationExpressionSyntax implicitArray => implicitArray.Initializer,
+            _ => null
+        };
+
+        if (initializer is not null)
+        {
+            foreach (var element in initializer.Expressions)
+                ValidateStringExpression(context, element, fieldSymbol);
+            return;
+        }
+
+        var constant = context.SemanticModel.GetConstantValue(expression);
+        if (!constant.HasValue || constant.Value is not string name) return;
+
+        // The drawer filters out blank names before resolving — no constraint, but nothing to diagnose.
+        if (string.IsNullOrWhiteSpace(name)) return;
+
+        if (SyntaxFacts.IsValidIdentifier(name))
+        {
+            // Identifier → member reference. The drawer walks the runtime type's hierarchy with instance-only
+            // binding flags, so the member must be an instance field/property visible from the declaring type.
+            var member = FindMemberFromHierarchy(fieldSymbol.ContainingType, name);
+
+            if (member is null)
+            {
+                context.ReportDiagnostic(Diagnostic.Create(
+                    DiagnosticRules.TypeSelectorMemberNotFoundRule, expression.GetLocation(),
+                    fieldSymbol.Name, name, fieldSymbol.ContainingType.Name));
+            }
+            else if (!IsSuitableConstraintSource(member))
+            {
+                context.ReportDiagnostic(Diagnostic.Create(
+                    DiagnosticRules.TypeSelectorMemberUnsuitableRule, expression.GetLocation(),
+                    fieldSymbol.Name, name));
+            }
+        }
+        else if (!IsPlausibleTypeName(name))
+        {
+            context.ReportDiagnostic(Diagnostic.Create(
+                DiagnosticRules.TypeSelectorTypeNameSyntaxRule, expression.GetLocation(),
+                fieldSymbol.Name, name));
+        }
+    }
+
+    // Mirrors the drawer's GetMemberFromHierarchy: nearest declaration wins. When several members share the name
+    // at one level, a suitable field/property is preferred so an overload/shadow doesn't produce a false positive.
+    private static ISymbol? FindMemberFromHierarchy(INamedTypeSymbol type, string name)
+    {
+        for (var current = type; current is not null; current = current.BaseType)
+        {
+            var members = current.GetMembers(name);
+            if (members.Length == 0) continue;
+
+            foreach (var member in members)
+                if (IsSuitableConstraintSource(member)) return member;
+
+            return members[0];
+        }
+
+        return null;
+    }
+
+    // A member the drawer can read as a base-type source: an instance field or property whose (element) type is
+    // System.Type or string. Static members are invisible to the drawer's instance-only lookup.
+    private static bool IsSuitableConstraintSource(ISymbol member)
+    {
+        var memberType = member switch
+        {
+            IFieldSymbol { IsStatic: false } field => field.Type,
+            IPropertySymbol { IsStatic: false } property => property.Type,
+            _ => null
+        };
+
+        if (memberType is null) return false;
+        if (memberType is IArrayTypeSymbol array) memberType = array.ElementType;
+
+        return memberType.SpecialType == SpecialType.System_String ||
+            memberType.ToDisplayString() == SystemTypeFull;
+    }
+
+    // Light syntax check for an assembly-qualified name: the type part is dot/plus-separated identifiers (each
+    // optionally arity-suffixed with `N), the comma-separated tail parts are non-empty. Generic/array forms with
+    // brackets are left to the editor — their grammar is not worth reimplementing here.
+    private static bool IsPlausibleTypeName(string name)
+    {
+        if (name.IndexOf('[') >= 0) return true;
+
+        var parts = name.Split(',');
+        foreach (var part in parts)
+            if (string.IsNullOrWhiteSpace(part)) return false;
+
+        foreach (var segment in parts[0].Split('.', '+'))
+        {
+            var identifier = segment.Trim();
+
+            var arityIndex = identifier.IndexOf('`');
+            if (arityIndex >= 0)
+            {
+                var arity = identifier.Substring(arityIndex + 1);
+                if (arity.Length == 0 || !arity.All(char.IsDigit)) return false;
+
+                identifier = identifier.Substring(0, arityIndex);
+            }
+
+            if (!SyntaxFacts.IsValidIdentifier(identifier)) return false;
+        }
+
+        return true;
     }
 
     // AFT0002 — Allow opts abstract classes / interfaces into the candidate list, which cannot be instantiated for a
