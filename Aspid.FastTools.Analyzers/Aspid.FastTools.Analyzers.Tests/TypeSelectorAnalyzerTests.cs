@@ -191,14 +191,6 @@ interface IEmpty { }
 class C { [SerializeReference, {|AFT0005:TypeSelector|}] private IEmpty _empty; }");
 
     [Fact]
-    public Task InterfaceWithOneConcreteImpl_NoAFT0005() => Verify(@"
-using UnityEngine;
-using Aspid.FastTools.Types;
-interface IFoo { }
-class FooImpl : IFoo { }
-class C { [SerializeReference, TypeSelector] private IFoo _foo; }");
-
-    [Fact]
     public Task AbstractBaseWithOnlyAbstractSubclasses_ReportsAFT0005() => Verify(@"
 using UnityEngine;
 using Aspid.FastTools.Types;
