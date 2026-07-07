@@ -46,4 +46,28 @@ public static class DiagnosticRules
         category: UsageCategory,
         defaultSeverity: Severity.Warning,
         isEnabledByDefault: true);
+
+    public static readonly Descriptor TypeSelectorMemberNotFoundRule = new(
+        id: "AFT0006",
+        title: "[TypeSelector] string argument resolves to nothing",
+        messageFormat: "[TypeSelector] on '{0}': '{1}' is neither a member of '{2}' nor an assembly-qualified type name — declare the member, or qualify the type with its assembly (\"{1}, MyAssembly\")",
+        category: UsageCategory,
+        defaultSeverity: Severity.Error,
+        isEnabledByDefault: true);
+
+    public static readonly Descriptor TypeSelectorMemberUnsuitableRule = new(
+        id: "AFT0007",
+        title: "[TypeSelector] member reference cannot supply base types",
+        messageFormat: "[TypeSelector] on '{0}': member '{1}' cannot supply base types — it must be an instance field or property of type Type, Type[], string, or string[]",
+        category: UsageCategory,
+        defaultSeverity: Severity.Error,
+        isEnabledByDefault: true);
+
+    public static readonly Descriptor TypeSelectorTypeNameSyntaxRule = new(
+        id: "AFT0008",
+        title: "[TypeSelector] string argument is not a valid type name",
+        messageFormat: "[TypeSelector] on '{0}': '{1}' is not a valid assembly-qualified type name",
+        category: UsageCategory,
+        defaultSeverity: Severity.Warning,
+        isEnabledByDefault: true);
 }

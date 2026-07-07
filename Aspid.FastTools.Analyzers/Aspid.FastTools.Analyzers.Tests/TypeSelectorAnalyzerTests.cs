@@ -28,6 +28,8 @@ namespace Aspid.FastTools.Types
         public TypeSelectorAttribute() { }
         public TypeSelectorAttribute(System.Type type) { }
         public TypeSelectorAttribute(params System.Type[] types) { }
+        public TypeSelectorAttribute(string assemblyQualifiedName) { }
+        public TypeSelectorAttribute(params string[] assemblyQualifiedNames) { }
         public TypeAllow Allow { get; set; }
     }
 }";
@@ -247,6 +249,132 @@ class C { [SerializeReference, {|AFT0005:TypeSelector|}] private Contracts.IShar
 namespace Contracts
 {
     public interface IShared { }
+}");
+
+    // AFT0006/AFT0007/AFT0008 — string arguments: member references (identifiers) and assembly-qualified names
+
+    [Fact]
+    public Task MemberReference_TypeField_NoDiagnostic() => Verify(@"
+using Aspid.FastTools.Types;
+class C
+{
+    private System.Type _base;
+    [TypeSelector(nameof(_base))] private string _type;
+}");
+
+    [Fact]
+    public Task MemberReference_TypeArrayProperty_NoDiagnostic() => Verify(@"
+using Aspid.FastTools.Types;
+class C
+{
+    private System.Type[] Bases { get; set; }
+    [TypeSelector(""Bases"")] private string _type;
+}");
+
+    [Fact]
+    public Task MemberReference_StringArrayField_NoDiagnostic() => Verify(@"
+using Aspid.FastTools.Types;
+class C
+{
+    private string[] _baseNames;
+    [TypeSelector(nameof(_baseNames))] private string _type;
+}");
+
+    [Fact]
+    public Task MemberReference_InheritedField_NoDiagnostic() => Verify(@"
+using Aspid.FastTools.Types;
+class Base { protected System.Type _base; }
+class C : Base
+{
+    [TypeSelector(nameof(_base))] private string _type;
+}");
+
+    [Fact]
+    public Task MemberReference_OnManagedReference_NoDiagnostic() => Verify(@"
+using UnityEngine;
+using Aspid.FastTools.Types;
+interface IFoo { }
+class FooImpl : IFoo { }
+class C
+{
+    private System.Type _base;
+    [SerializeReference, TypeSelector(nameof(_base))] private IFoo _foo;
+}");
+
+    [Fact]
+    public Task UnknownIdentifier_ReportsAFT0006() => Verify(@"
+using Aspid.FastTools.Types;
+class C { [TypeSelector({|AFT0006:""_missing""|})] private string _type; }");
+
+    [Fact]
+    public Task MemberIsMethod_ReportsAFT0007() => Verify(@"
+using Aspid.FastTools.Types;
+class C
+{
+    private System.Type GetBase() => null;
+    [TypeSelector({|AFT0007:nameof(GetBase)|})] private string _type;
+}");
+
+    [Fact]
+    public Task StaticMember_ReportsAFT0007() => Verify(@"
+using Aspid.FastTools.Types;
+class C
+{
+    private static System.Type _base;
+    [TypeSelector({|AFT0007:nameof(_base)|})] private string _type;
+}");
+
+    [Fact]
+    public Task WrongTypedMember_ReportsAFT0007() => Verify(@"
+using Aspid.FastTools.Types;
+class C
+{
+    private int _base;
+    [TypeSelector({|AFT0007:nameof(_base)|})] private string _type;
+}");
+
+    [Fact]
+    public Task AssemblyQualifiedName_NoDiagnostic() => Verify(@"
+using Aspid.FastTools.Types;
+class C { [TypeSelector(""My.Namespace.IWeapon, MyAssembly"")] private string _type; }");
+
+    [Fact]
+    public Task NamespaceQualifiedNameWithoutAssembly_NoDiagnostic() => Verify(@"
+using Aspid.FastTools.Types;
+class C { [TypeSelector(""System.Collections.IList"")] private string _type; }");
+
+    [Fact]
+    public Task NestedTypeName_NoDiagnostic() => Verify(@"
+using Aspid.FastTools.Types;
+class C { [TypeSelector(""My.Outer+Nested, MyAssembly"")] private string _type; }");
+
+    [Fact]
+    public Task GenericTypeNameWithBrackets_NoDiagnostic() => Verify(@"
+using Aspid.FastTools.Types;
+class C { [TypeSelector(""System.Collections.Generic.List`1[[System.Int32, mscorlib]], mscorlib"")] private string _type; }");
+
+    [Fact]
+    public Task TrailingCommaTypeName_ReportsAFT0008() => Verify(@"
+using Aspid.FastTools.Types;
+class C { [TypeSelector({|AFT0008:""My.Namespace.IWeapon, ""|})] private string _type; }");
+
+    [Fact]
+    public Task NameWithSpace_ReportsAFT0008() => Verify(@"
+using Aspid.FastTools.Types;
+class C { [TypeSelector({|AFT0008:""My Class, MyAssembly""|})] private string _type; }");
+
+    [Fact]
+    public Task EmptyString_NoDiagnostic() => Verify(@"
+using Aspid.FastTools.Types;
+class C { [TypeSelector("""")] private string _type; }");
+
+    [Fact]
+    public Task ExplicitArrayArgument_ValidatesElements() => Verify(@"
+using Aspid.FastTools.Types;
+class C
+{
+    private System.Type _base;
+    [TypeSelector(new string[] { nameof(_base), {|AFT0006:""_missing""|} })] private string _type;
 }");
 
     private static Task VerifyWithReferencedProject(string code, string referencedProjectSource)
